@@ -1,0 +1,31 @@
+# ---- training outputs ----
+work_dirs/
+**/work_dirs/
+
+# ---- python cache ----
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# ---- checkpoints / logs ----
+*.pth
+*.pt
+*.ckpt
+*.log
+*.log.json
+*.json
+
+# ---- editor temp ----
+*.swp
+*.swo
+*.tmp
+
+# ---- datasets / archives ----
+data/
+**/data/
+classification/data/
+*.zip
+*.tar
+*.tar.gz
+*.7z
