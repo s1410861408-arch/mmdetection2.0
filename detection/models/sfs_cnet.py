@@ -3,8 +3,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmengine.model import BaseModule
-from mmdet.registry import MODELS
+
+# [修正1] 导入 MMDetection 2.x 必需的模块
+from mmcv.runner import BaseModule
+from mmdet.models.builder import BACKBONES
+
+# [修正2] 移除 import thop，避免不必要的报错
 
 def autopad(k, p=None, d=1):
     """Pad to 'same' shape outputs."""
@@ -14,6 +18,7 @@ def autopad(k, p=None, d=1):
         p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
     return p
 
+# [修正3] 继承 BaseModule 并添加 init_cfg
 class Conv(BaseModule):
     default_act = nn.SiLU()
 
@@ -38,11 +43,10 @@ class Conv(BaseModule):
         return c
 
 class FractionalGaborFilter(BaseModule):
-    def __init__(self, in_channels, out_channels, kernel_size, order, angles, scales):
-        super().__init__()
+    def __init__(self, in_channels, out_channels, kernel_size, order, angles, scales, init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         self.real_weights = nn.ParameterList()
-        # self.imag_weights = nn.ParameterList() # Currently unused in original logic
-
+        
         for angle in angles:
             for scale in scales:
                 real_weight = self.generate_fractional_gabor(
@@ -61,20 +65,17 @@ class FractionalGaborFilter(BaseModule):
         )
         
         real_weight = torch.tensor(real_part, dtype=torch.float32).view(1, 1, size[0], size[1])
-        real_weight = real_weight.repeat(out_channels, 1, 1, 1) # [out, 1, H, W] - Group conv style
+        real_weight = real_weight.repeat(out_channels, 1, 1, 1) 
         return real_weight
 
     def forward(self, x):
         real_weights = [weight for weight in self.real_weights]
-        # Simply summing weights and multiplying by x? 
-        # Note: Original code logic was: sum(weight * x). 
-        # This implies weight and x broadcast. Assuming x is a parameter in GaborSingle.
         real_result = sum(weight * x for weight in real_weights)
         return real_result
 
 class GaborSingle(BaseModule):
-    def __init__(self, in_channels, out_channels, kernel_size, order, angles, scales):
-        super().__init__()
+    def __init__(self, in_channels, out_channels, kernel_size, order, angles, scales, init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         self.gabor = FractionalGaborFilter(
             in_channels, out_channels, kernel_size, order, angles, scales
         )
@@ -86,21 +87,17 @@ class GaborSingle(BaseModule):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        # Generate dynamic weights
         out_weight = self.gabor(self.t)
-        # Standard convolution with generated weights
         out = F.conv2d(x, out_weight, stride=1, padding=(out_weight.shape[-2] - 1) // 2)
         out = self.relu(out)
         out = F.dropout(out, 0.3)
-        # Note: Padding + MaxPool with stride 1 effectively keeps resolution same or shifts it.
-        # Assuming intention is to keep resolution same for feature extraction within block.
         out = F.pad(out, (1, 0, 1, 0), mode="constant", value=0)
         out = F.max_pool2d(out, 2, stride=1, padding=0)
         return out
 
 class GaborFPU(BaseModule):
-    def __init__(self, in_channels, out_channels, order=0.25, angles=[0, 45, 90, 135], scales=[1, 2, 3, 4]):
-        super().__init__()
+    def __init__(self, in_channels, out_channels, order=0.25, angles=[0, 45, 90, 135], scales=[1, 2, 3, 4], init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         self.gabor = GaborSingle(
             in_channels // 4, out_channels // 4, (3, 3), order, angles, scales
         )
@@ -118,8 +115,8 @@ class GaborFPU(BaseModule):
         return x_out
 
 class FrFTFilter(BaseModule):
-    def __init__(self, in_channels, out_channels, kernel_size, f, order):
-        super().__init__()
+    def __init__(self, in_channels, out_channels, kernel_size, f, order, init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         self.register_buffer(
             "weight",
             self.generate_FrFT_filter(in_channels, out_channels, kernel_size, f, order),
@@ -157,13 +154,12 @@ class FrFTFilter(BaseModule):
         return torch.tensor(g_f_real).type(torch.FloatTensor)
 
     def forward(self, x):
-        # Applying weight mask to param x
         x = x * self.weight
         return x
 
 class FrFTSingle(BaseModule):
-    def __init__(self, in_channels, out_channels, kernel_size, f, order):
-        super().__init__()
+    def __init__(self, in_channels, out_channels, kernel_size, f, order, init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         self.fft = FrFTFilter(in_channels, out_channels, kernel_size, f, order)
         self.t = nn.Parameter(
             torch.randn(out_channels, in_channels, kernel_size[0], kernel_size[1]),
@@ -182,9 +178,8 @@ class FrFTSingle(BaseModule):
         return out
 
 class FourierFPU(BaseModule):
-    def __init__(self, in_channels, out_channels, order=0.25):
-        super().__init__()
-        # Ensure division stability
+    def __init__(self, in_channels, out_channels, order=0.25, init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         mid_in = in_channels // 4
         mid_out = out_channels // 4
         
@@ -206,8 +201,8 @@ class FourierFPU(BaseModule):
         return x_out
 
 class SPU(BaseModule):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
+    def __init__(self, in_channels, out_channels, init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         self.c1 = Conv(in_channels // 2, in_channels // 2, 3, g=in_channels // 2)
         self.c2 = Conv(in_channels // 2, in_channels // 2, 5, g=in_channels // 2)
         self.c3 = Conv(in_channels, out_channels, 1)
@@ -223,17 +218,13 @@ class SPU(BaseModule):
         return x_out
 
 class SFS_Conv(BaseModule):
-    """SFS Convolution Module used as a building block."""
-    def __init__(self, in_channels, out_channels, order=0.25, filter="FrGT"):
-        super().__init__()
+    def __init__(self, in_channels, out_channels, order=0.25, filter="FrGT", init_cfg=None):
+        super().__init__(init_cfg=init_cfg)
         self.PWC0 = Conv(in_channels, in_channels // 2, 1)
         self.PWC1 = Conv(in_channels, in_channels // 2, 1)
         self.SPU = SPU(in_channels // 2, out_channels)
 
-        assert filter in (
-            "FrFT",
-            "FrGT",
-        ), "The filter type must be either Fractional Fourier Transform(FrFT) or Fractional Gabor Transform(FrGT)."
+        assert filter in ("FrFT", "FrGT")
         if filter == "FrFT":
             self.FPU = FourierFPU(in_channels // 2, out_channels, order)
         elif filter == "FrGT":
@@ -250,18 +241,9 @@ class SFS_Conv(BaseModule):
         out1, out2 = torch.split(out, out.size(1) // 2, dim=1)
         return self.PWC_o(out1 + out2)
 
-@MODELS.register_module()
+# [修正4] 使用 @BACKBONES.register_module() 注册模型
+@BACKBONES.register_module()
 class SFSCNet(BaseModule):
-    """
-    SFS-CNet Backbone for MMDetection.
-    Constructs a pyramid structure using SFS_Conv blocks.
-    
-    Args:
-        base_channels (int): Base channels for the stem.
-        arch_settings (list[int]): Number of SFS blocks in each stage. Default: [2, 2, 2, 2]
-        filter_type (str): 'FrFT' or 'FrGT'.
-        out_indices (Sequence[int]): Output from which stages.
-    """
     def __init__(self, 
                  base_channels=32, 
                  arch_settings=[2, 2, 2, 2], 
@@ -271,28 +253,24 @@ class SFSCNet(BaseModule):
         super().__init__(init_cfg)
         self.out_indices = out_indices
         
-        # 1. Stem Layer (Input -> C1)
-        self.stem = Conv(3, base_channels, 3, s=1) # Assuming input size doesn't reduce dramatically initially or uses config input size
+        # Stem Layer
+        self.stem = Conv(3, base_channels, 3, s=1) 
         
         self.stages = nn.ModuleList()
         in_c = base_channels
         
-        # 2. Build Stages
+        # Build Stages
         for i, num_blocks in enumerate(arch_settings):
             stage = nn.ModuleList()
             out_c = base_channels * (2 ** i)
             
-            # Downsample layer (except for the first stage if we want to keep high res, 
-            # typically Stage 1 is stride 2 or 4 relative to image)
-            # Here we assume a standard structure: Downsample -> Process
             if i > 0:
                 downsample = Conv(in_c, out_c, 3, s=2) 
             else:
-                downsample = Conv(in_c, out_c, 3, s=2) # First stage also downsamples to save memory
+                downsample = Conv(in_c, out_c, 3, s=2) 
             
             stage.append(downsample)
             
-            # Blocks
             for _ in range(num_blocks):
                 stage.append(SFS_Conv(out_c, out_c, filter=filter_type))
             
@@ -309,22 +287,14 @@ class SFSCNet(BaseModule):
             
             if i in self.out_indices:
                 outs.append(x)
-                
+        
+        # [修正5] 确保返回的是 tuple，否则 FPN 会报错
         return tuple(outs)
 
 if __name__ == "__main__":
-    # Test code
-    batch_size = 2
-    height = 256
-    width = 256
-    
-    # Test Model registration
     model = SFSCNet(base_channels=32)
-    x = torch.randn(batch_size, 3, height, width)
-    
-    # Forward
+    x = torch.randn(2, 3, 256, 256)
     outputs = model(x)
-    print("Model created.")
-    print(f"Input shape: {x.shape}")
+    print(f"Model created. Output type: {type(outputs)}")
     for i, out in enumerate(outputs):
         print(f"Output {i} shape: {out.shape}")
