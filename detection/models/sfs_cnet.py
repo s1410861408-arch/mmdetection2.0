@@ -254,7 +254,7 @@ class SFSCNet(BaseModule):
         self.out_indices = out_indices
         
         # Stem Layer
-        self.stem = Conv(3, base_channels, 3, s=1) 
+        self.stem = Conv(3, base_channels, 3, s=2) 
         
         self.stages = nn.ModuleList()
         in_c = base_channels
@@ -262,12 +262,13 @@ class SFSCNet(BaseModule):
         # Build Stages
         for i, num_blocks in enumerate(arch_settings):
             stage = nn.ModuleList()
-            out_c = base_channels * (2 ** i)
-            
-            if i > 0:
-                downsample = Conv(in_c, out_c, 3, s=2) 
-            else:
-                downsample = Conv(in_c, out_c, 3, s=2) 
+            out_c = base_channels * (2 ** (i + 1))
+
+            downsample = Conv(in_c, out_c, 3, s=2)
+            # if i > 0:
+            #     downsample = Conv(in_c, out_c, 3, s=2) 
+            # else:
+            #     downsample = Conv(in_c, out_c, 3, s=2) 
             
             stage.append(downsample)
             
@@ -288,7 +289,6 @@ class SFSCNet(BaseModule):
             if i in self.out_indices:
                 outs.append(x)
         
-        # [修正5] 确保返回的是 tuple，否则 FPN 会报错
         return tuple(outs)
 
 if __name__ == "__main__":
