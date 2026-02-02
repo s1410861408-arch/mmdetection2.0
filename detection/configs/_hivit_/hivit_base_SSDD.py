@@ -34,7 +34,7 @@ model = dict(
         init_cfg=dict(type='Pretrained', checkpoint=pretrained)),
     neck=dict(
         type='FPN',
-        in_channels=[32, 64, 128, 256],
+        in_channels=[128, 256, 512, 512],
         out_channels=256,
         num_outs=5),
     roi_head=dict(
