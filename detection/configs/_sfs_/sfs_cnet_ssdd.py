@@ -20,7 +20,7 @@ model = dict(
         init_cfg=dict(type='Kaiming', layer='Conv2d')),
     neck=dict(
         type='FPN',
-        in_channels=[32, 64, 128, 256],
+        in_channels=[64, 128, 256, 512],
         out_channels=256,
         num_outs=5),
     roi_head=dict(
@@ -107,8 +107,8 @@ test_pipeline = [
 ]
 
 data = dict(
-    samples_per_gpu=2,
-    workers_per_gpu=2,
+    samples_per_gpu=8,
+    workers_per_gpu=4,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/train.json',
@@ -130,19 +130,30 @@ data = dict(
         pipeline=test_pipeline))
 
 
-optimizer = dict(
-    _delete_=True,
-    type='AdamW',
-    lr=5e-4,
-    betas=(0.9, 0.999),
-    weight_decay=0.05,
-    #constructor='HiViTLayerDecayOptimizerConstructor',
-    paramwise_cfg=dict(num_layers=20, layer_decay_rate=0.9),
-)
+# optimizer = dict(
+#     _delete_=True,
+#     type='AdamW',
+#     lr=5e-4,
+#     betas=(0.9, 0.999),
+#     weight_decay=0.05,
+#     #constructor='HiViTLayerDecayOptimizerConstructor',
+#     paramwise_cfg=dict(num_layers=20, layer_decay_rate=0.9),
+# )
 
-lr_config = dict(step=[27, 33])
-runner = dict(type='EpochBasedRunner', max_epochs=36)
-# do not use mmdet version fp16
+optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001)
+optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
+
+# lr_config = dict(step=[27, 33])
+# runner = dict(type='EpochBasedRunner', max_epochs=36)
+
+lr_config = dict(
+    policy='step',
+    warmup='linear',
+    warmup_iters=500,
+    warmup_ratio=0.001,
+    step=[40,55]) 
+runner = dict(type='EpochBasedRunner', max_epochs=60)
+
 fp16 = None
 optimizer_config = dict(
     type="DistOptimizerHook",
